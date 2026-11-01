@@ -3,7 +3,10 @@ $('search').onclick=async()=>{let place=$('place').value.trim(),kind=$('kind').v
 function draft(i){let lead=leads[i],sender=$('sender').value.trim()||'[your business]';$('email').value=`Subject: A website idea for ${lead.name}\n\nHi ${lead.name} team,\n\nI came across your business while looking at local ${$('kind').value.trim()} businesses. [Add a genuine detail you noticed about the business or website.]\n\nI'm with ${sender}. We create clear, mobile-friendly websites that help local customers find what they need and get in touch. I'd love to share a few ideas tailored to ${lead.name}.\n\nWould you be open to a brief conversation next week?\n\nBest,\n[Your name]\n${sender}`;$('email').scrollIntoView({behavior:'smooth'})}
 $('copy').onclick=async()=>{await navigator.clipboard.writeText($('email').value);$('copy').textContent='Copied!';setTimeout(()=>$('copy').textContent='Copy email',1500)};
 
-function categoryPattern(input){const aliases={restaurants:'restaurant',cafes:'cafe',bakeries:'bakery','hair salons':'hairdresser|beauty','barbers':'barber|hairdresser',dentists:'dentist',plumbers:'plumber',electricians:'electrician','real estate agents':'estate_agent',florists:'florist',gyms:'fitness_centre|gym',hotels:'hotel'};const clean=input.toLowerCase().replace(/[^a-z0-9 ]/g,'').trim();return aliases[clean]||clean.replace(/ies$/,'y').replace(/s$/,'').replace(/ +/g,'_')}
+function categoryPattern(input){const aliases={restaurants:'restaurant',cafes:'cafe',bakeries:'bakery','hair salons':'hairdresser|beauty','barbers':'barber|hairdresser',dentists:'dentist',plumbers:'plumber',electricians:'electrician','real estate agents':'estate_agent',florists:'florist',gyms:'fitness_centre|gym',hotels:'hotel'};const clean=input.toLowerCase().replace(/[^a-z0-9 ]/g,'').trim();if(/^restaur/.test(clean))return 'restaurant';const match=Object.keys(aliases).find(key=>distance(clean,key)<=2);return aliases[match]||clean.replace(/ies$/,'y').replace(/s$/,'').replace(/ +/g,'_')}
 
+
+
+function distance(a,b){let row=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let next=[i];for(let j=1;j<=b.length;j++)next[j]=Math.min(next[j-1]+1,row[j]+1,row[j-1]+(a[i-1]===b[j-1]?0:1));row=next}return row[b.length]}
 
 
