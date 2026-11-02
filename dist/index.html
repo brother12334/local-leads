@@ -84,8 +84,10 @@
     <form method="dialog">
       <h2>Settings</h2>
       <div class="grid2">
-        <label class="field"><span>Your business name</span><input name="sender" placeholder="e.g. Brightline Web Studio"></label>
-        <label class="field"><span>Your name</span><input name="yourName" placeholder="Used to sign emails"></label>
+        <label class="field"><span>Your name</span><input name="yourName" placeholder="Phineas Yablon"></label>
+        <label class="field"><span>Your business name</span><input name="sender" placeholder="Orange You Online?"></label>
+        <label class="field"><span>Build price ($)</span><input name="buildPrice" type="number" min="0" step="1" placeholder="950"></label>
+        <label class="field"><span>Yearly management ($)</span><input name="yearlyPrice" type="number" min="0" step="1" placeholder="300"></label>
       </div>
       <h3>Website checker</h3>
       <p class="muted small">Browsers can’t read other websites directly, so pages are fetched through a proxy. Currently using: <b id="proxy-mode">…</b>. Public proxies work but are rate-limited; for reliable bulk checks run <code>npm start</code> locally or deploy <code>worker/cors-proxy.js</code> and paste its URL here.</p>
@@ -105,6 +107,6 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script type="module" src="js/app.js?v=8"></script>
+  <script type="module" src="js/app.js?v=9"></script>
 </body>
 </html>

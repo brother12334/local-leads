@@ -28,7 +28,7 @@ Each lead gets an **opportunity score**: no site or a broken site ranks highest,
 - Map of results colored by website status
 - Filters by group, pipeline stage and name, plus sorting
 - Pipeline stages (New → Contacted → Interested → Won / Not a fit), notes, and manual overrides
-- Email drafts that change with the finding: no site, social-only, broken domain, or the specific issues found on an outdated site
+- Email drafts in your own format, with the business name, their domain and your prices filled in. The wording switches between "rebuild" and "build" depending on whether they have a site. Name, business name and prices are set in **Settings**
 - CSV export
 - Light and dark themes, a responsive layout, and keyboard shortcuts (`/` filter, `j`/`k` move, `c` check)
 

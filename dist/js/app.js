@@ -183,7 +183,7 @@ function renderDetail(force = false) {
   const l = leads.find(x => x.id === selected);
   // Re-render only when this lead's data changed, so typing in the notes or the
   // email draft isn't wiped by a background scan.
-  const sig = l ? JSON.stringify([l.id, statusOf(l), audit(l)?.checkedAt, !!audit(l)?.psi, crm.get(l.id)?.stage, crm.get(l.id)?.override, settings.get().sender, settings.get().yourName]) : '';
+  const sig = l ? JSON.stringify([l.id, statusOf(l), audit(l)?.checkedAt, !!audit(l)?.psi, crm.get(l.id)?.stage, crm.get(l.id)?.override, settings.get().sender, settings.get().yourName, settings.get().buildPrice, settings.get().yearlyPrice]) : '';
   if (!force && sig === detailSig && box.childElementCount) return;
   detailSig = sig;
   if (l) lookupArchive(l);
@@ -250,16 +250,16 @@ function renderDetail(force = false) {
     h('textarea', { class: 'notes', placeholder: 'Notes — what you noticed, who you spoke to…', rows: 2, onchange: e => crm.set(l.id, { ...(crm.get(l.id) || {}), notes: e.target.value }) }, c.notes || ''));
 
   const set = settings.get();
-  const draft = draftEmail(l, a, s, { sender: set.sender, yourName: set.yourName, place });
+  const draft = draftEmail(l, a, s, set);
   const ta = h('textarea', { class: 'email', rows: 14, 'aria-label': 'Email draft' }, draft.text);
   const email = h('section', { class: 'compose' },
     h('h3', {}, 'Email draft'),
-    h('p', { class: 'meta' }, 'Tailored to the audit. Replace the bracketed line with something genuine before sending.'),
+    h('p', { class: 'meta' }, 'Attach your ideas for the site before sending.'),
     ta,
     h('div', { class: 'row' },
       h('button', { class: 'btn', onclick: async e => { await copy(ta.value); flash(e.currentTarget, 'Copied'); } }, icon('copy'), 'Copy'),
       h('button', { class: 'btn ghost', onclick: () => { const [subj, ...rest] = ta.value.split('\n'); location.href = `mailto:${l.email || ''}?subject=${encodeURIComponent(subj.replace(/^Subject:\s*/, ''))}&body=${encodeURIComponent(rest.join('\n').trim())}`; } }, icon('mail'), 'Open in mail'),
-      !set.sender && h('button', { class: 'linkish', onclick: openSettings }, 'Add your business name')));
+      h('button', { class: 'linkish', onclick: openSettings }, 'Edit name & prices')));
 
   box.replaceChildren(
     h('div', { class: 'detail-head' },
@@ -490,7 +490,7 @@ function toast(msg) {
 function openSettings() {
   const s = settings.get();
   const d = $('#settings');
-  for (const k of ['sender', 'yourName', 'proxy', 'psiKey']) d.querySelector(`[name=${k}]`).value = s[k] || '';
+  for (const k of ['sender', 'yourName', 'buildPrice', 'yearlyPrice', 'proxy', 'psiKey']) d.querySelector(`[name=${k}]`).value = s[k] || '';
   proxyMode().then(m => { $('#proxy-mode').textContent = m; });
   d.showModal();
 }
@@ -524,7 +524,7 @@ function boot() {
   $('#settings').addEventListener('close', () => {
     const d = $('#settings');
     if (d.returnValue !== 'save') return;
-    settings.patch(Object.fromEntries(['sender', 'yourName', 'proxy', 'psiKey'].map(k => [k, d.querySelector(`[name=${k}]`).value.trim()])));
+    settings.patch(Object.fromEntries(['sender', 'yourName', 'buildPrice', 'yearlyPrice', 'proxy', 'psiKey'].map(k => [k, d.querySelector(`[name=${k}]`).value.trim()])));
     render();
   });
   $('#clear-audits').addEventListener('click', () => { audits.clear(); toast('Website checks cleared.'); render(); });
