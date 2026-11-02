@@ -60,7 +60,7 @@ async function proxyFetch(target) {
       const res = await fetch(url, {
         redirect: 'manual',
         signal: ctrl.signal,
-        headers: { 'user-agent': 'Mozilla/5.0 (compatible; LocalLeadsChecker/2.0)', accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5', 'accept-language': 'en-US,en;q=0.8' },
+        headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36', accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5', 'accept-language': 'en-US,en;q=0.8' },
       });
       const loc = res.headers.get('location');
       if (res.status >= 300 && res.status < 400 && loc) { url = new URL(loc, url); continue; }

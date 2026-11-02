@@ -37,7 +37,7 @@ export default {
       try {
         const res = await fetch(target, {
           redirect: 'follow',
-          headers: { 'user-agent': 'Mozilla/5.0 (compatible; LocalLeadsChecker/2.0)', accept: 'text/html,*/*;q=0.5' },
+          headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36', accept: 'text/html,*/*;q=0.5' },
           signal: AbortSignal.timeout(12000),
         });
         const type = res.headers.get('content-type') || '';

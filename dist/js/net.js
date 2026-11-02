@@ -2,6 +2,7 @@
 // through a proxy: your own (server.js or worker/cors-proxy.js) when available,
 // otherwise free public CORS proxies.
 import { settings } from './store.js';
+import { parseSearchResults, isBotWall, stripTags } from './analyze.js';
 
 const TIMEOUT = 15000;
 let localApi; // undefined = not probed yet
@@ -46,7 +47,17 @@ const PUBLIC = [
     async get(url) {
       const r = await timed('https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(url));
       if (!r.ok) throw Error('codetabs ' + r.status);
-      return { status: r.status, finalUrl: url, headers: {}, body: await r.text() };
+      const body = await r.text();
+      if (/^\s*\{\s*"Error"/i.test(body)) throw Error('codetabs: ' + body.slice(0, 80));
+      return { status: r.status, finalUrl: url, headers: {}, body };
+    },
+  },
+  {
+    name: 'corsproxy',
+    async get(url) {
+      const r = await timed('https://corsproxy.io/?url=' + encodeURIComponent(url));
+      if (r.status === 403 || r.status === 401) throw Error('corsproxy refused');
+      return { status: r.status, finalUrl: url, headers: { 'content-type': r.headers.get('content-type') || '' }, body: await r.text() };
     },
   },
 ];
@@ -62,8 +73,12 @@ export async function fetchPage(url) {
   }
   let last;
   for (const p of PUBLIC) {
-    try { return { ...(await p.get(url)), via: p.name }; }
-    catch (e) { last = e; }
+    try {
+      const res = await p.get(url);
+      // allorigins reports a failed upstream fetch as status 0 / null contents
+      if (!res.status && !res.body) throw Error(p.name + ': upstream failed');
+      return { ...res, via: p.name };
+    } catch (e) { last = e; }
   }
   throw last || Error('No proxy available');
 }
@@ -121,6 +136,51 @@ export async function pageSpeed(url, key) {
   if (!r.ok) throw Error(j.error?.message?.split('.')[0] || 'PageSpeed ' + r.status);
   const c = j.lighthouseResult.categories;
   return Object.fromEntries(Object.entries(c).map(([k, v]) => [k, Math.round(v.score * 100)]));
+}
+
+// ---- Web search ----
+
+const ENGINES = [
+  { name: 'Bing', url: q => `https://www.bing.com/search?format=rss&setlang=en-US&cc=US&q=${encodeURIComponent(q)}` },
+  { name: 'DuckDuckGo', url: q => `https://html.duckduckgo.com/html/?kl=us-en&q=${encodeURIComponent(q)}` },
+  { name: 'Mojeek', url: q => `https://www.mojeek.com/search?q=${encodeURIComponent(q)}` },
+];
+const searchCache = new Map();
+
+/**
+ * Search the web for a query. Tries engines in order (skipping ones that fail or
+ * return a captcha) → {engine, results:[{url,host,title}]} ; throws if every engine fails.
+ */
+export async function webSearch(query, { skip = [] } = {}) {
+  const key = query + '|' + skip.join(',');
+  if (searchCache.has(key)) return searchCache.get(key);
+  const errors = [];
+  for (const engine of ENGINES) {
+    if (skip.includes(engine.name)) continue;
+    try {
+      const page = await fetchPage(engine.url(query));
+      const body = page.body || '';
+      const results = parseSearchResults(body);
+      const text = stripTags(body);
+      if (!results.length && (isBotWall(body, '', text, page.status) || /anomaly|unusual traffic|bots use duckduckgo|solve the challenge/i.test(body) || body.length < 400)) {
+        throw Error('blocked');
+      }
+      const out = { engine: engine.name, results };
+      searchCache.set(key, out);
+      return out;
+    } catch (e) { errors.push(`${engine.name}: ${e.message}`); }
+  }
+  throw Error('Web search unavailable (' + errors.join('; ') + ')');
+}
+
+/** Official website of a chain/brand from Wikidata (property P856). */
+export async function brandWebsite(qid) {
+  if (!/^Q\d+$/.test(qid || '')) return null;
+  try {
+    const r = await timed(`https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=${qid}&property=P856&format=json&origin=*`, {}, 10000);
+    const j = await r.json();
+    return j.claims?.P856?.[0]?.mainsnak?.datavalue?.value || null;
+  } catch { return null; }
 }
 
 // ---- OpenStreetMap ----

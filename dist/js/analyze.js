@@ -135,7 +135,16 @@ export function analyzeHtml(html, meta = {}) {
   for (const [re, label] of BUILDERS) if (re.test(html) && !tech.includes(label)) tech.push(label);
   if (generator && !tech.some(t => generator.toLowerCase().includes(t.toLowerCase().split(' ')[0]))) tech.push(generator);
 
-  const base = { title, generator, tech, textLength: text.length, nameMatch: meta.businessName ? nameMatch(meta.businessName, title + ' ' + text) : null };
+  const businessName = meta.lead?.name || meta.businessName;
+  const base = {
+    title, generator, tech, textLength: text.length,
+    nameMatch: businessName ? nameMatch(businessName, title + ' ' + text) : null,
+    identity: meta.lead ? identityMatch(meta.lead, html, text, title, finalUrl) : null,
+  };
+
+  if (isBotWall(html, title, text, meta.status)) {
+    return { ...base, kind: 'blocked', score: null, verdict: null, checks: [], summary: 'Site is online but blocks automated checks (security challenge)' };
+  }
 
   if (PARKED.some(re => re.test(text) || re.test(title))) {
     return { ...base, kind: 'parked', score: 100, verdict: 'broken', checks: [], summary: 'Domain is parked or for sale' };
@@ -241,6 +250,126 @@ export function analyzeHtml(html, meta = {}) {
   return { ...base, kind: 'live', score, verdict, checks, copyrightYear: cy, summary };
 }
 
+const BOT_WALL = [
+  /just a moment\.\.\./i, /attention required! \| cloudflare/i, /cf-browser-verification|cf_chl_opt|challenge-platform/i,
+  /checking (if the site connection is secure|your browser)/i, /enable javascript and cookies to continue/i,
+  /verify you are (a )?human/i, /access denied/i, /request unsuccessful\. incapsula/i, /_incapsula_resource/i,
+  /sucuri website firewall/i, /captcha/i, /are you a robot/i, /ddos protection by/i, /pardon our interruption/i,
+];
+
+/** Security / bot-challenge pages mean the site exists but couldn't be read. */
+export function isBotWall(html, title = '', text = '', status = 200) {
+  if (text.length > 3000) return false;
+  if ([401, 403, 429, 503].includes(status) && (BOT_WALL.some(re => re.test(html)) || text.length < 600)) return true;
+  return BOT_WALL.some(re => re.test(title)) || (text.length < 1200 && BOT_WALL.slice(0, 6).some(re => re.test(html)));
+}
+
+const digits = s => (s || '').replace(/\D/g, '');
+
+/**
+ * How sure are we that this page belongs to this business?
+ * Combines name, phone, street address, city and domain signals → {confidence 0–1, signals[]}.
+ */
+export function identityMatch(lead, html, text, title = '', url = '') {
+  const signals = [];
+  const name = nameMatch(lead.name, title + ' ' + text);
+  const titleName = nameMatch(lead.name, title);
+  if (name >= 0.6) signals.push(`name on page (${Math.round(name * 100)}%)`);
+
+  const phone = digits(lead.phone).slice(-10);
+  let phoneHit = false;
+  if (phone.length >= 7) {
+    const pageDigits = digits(html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/[a-z]+/gi, ' x '));
+    const loose = digits(html);
+    phoneHit = pageDigits.includes(phone) || loose.includes(phone) || (phone.length === 10 && loose.includes(phone.slice(3)) && loose.includes(phone.slice(0, 3)));
+    if (phoneHit) signals.push('phone number matches');
+  }
+
+  let addressHit = false;
+  const m = (lead.address || '').match(/^(\d+[a-z]?)\s+(.+)$/i);
+  if (m) {
+    const streetWord = nameTokens(m[2]).find(t => t.length > 2 && !/^(st|street|ave|avenue|rd|road|blvd|dr|drive|ln|way|ct|nw|ne|sw|se|north|south|east|west|hwy|highway)$/.test(t));
+    const low = text.toLowerCase();
+    addressHit = !!streetWord && new RegExp(`\\b${m[1]}\\b[^.]{0,40}${streetWord}`, 'i').test(low);
+    if (addressHit) signals.push('street address matches');
+  }
+
+  const city = nameTokens((lead.city || lead.place || '').split(',')[0]);
+  const cityHit = city.length > 0 && city.every(t => (' ' + text.toLowerCase() + ' ').includes(t));
+  if (cityHit) signals.push('city mentioned');
+
+  const dom = url ? domainMatch(hostOf(url), lead.name) : 0;
+  if (dom >= 0.6) signals.push('domain matches name');
+
+  // Evidence against: the page lists phone numbers and none of them is this business's.
+  const pagePhones = (text.match(/\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]\d{4}\b/g) || []).map(p => digits(p).slice(-10));
+  const phoneConflict = phone.length === 10 && !phoneHit && pagePhones.length > 0;
+  if (phoneConflict) signals.push('different phone number on page');
+
+  let confidence;
+  if (phoneHit && name >= 0.4) confidence = 0.97;
+  else if (phoneHit) confidence = 0.85;
+  else if (addressHit && name >= 0.5) confidence = 0.93;
+  else if (name >= 0.6 && dom >= 0.6 && cityHit) confidence = 0.88;
+  else if (name >= 0.8 && cityHit && !phoneConflict) confidence = 0.78;
+  else if (name >= 0.6 && dom >= 0.6 && !phoneConflict) confidence = 0.7;
+  else if (titleName >= 0.8 && dom >= 0.4 && !phoneConflict) confidence = 0.66;
+  else confidence = Math.min(0.5, name * 0.5 + (cityHit ? 0.1 : 0));
+  return { confidence, signals };
+}
+
+/** Share of the name's words that appear in the domain (0–1). */
+export function domainMatch(host, name) {
+  const label = (host || '').replace(/^www\./, '').split('.').slice(0, -1).join('').replace(/-/g, '');
+  const tokens = nameTokens(name).filter(t => t.length >= 3 || nameTokens(name).length === 1);
+  if (!label || !tokens.length) return 0;
+  const hits = tokens.filter(t => label.includes(t)).length;
+  let score = hits / tokens.length;
+  const initials = nameTokens(name).map(t => t[0]).join('');
+  if (initials.length >= 3 && label.startsWith(initials)) score = Math.max(score, 0.6);
+  return score;
+}
+
+// Hosts that list businesses but are not the business's own website.
+const DIRECTORY = /(^|\.)(yelp|yellowpages|yp|bbb|mapquest|tripadvisor|manta|chamberofcommerce|nextdoor|angi|angieslist|homeadvisor|thumbtack|houzz|porch|buildzoom|opentable|resy|doordash|grubhub|ubereats|seamless|postmates|slicelife|menupages|allmenus|menuism|sirved|zmenu|restaurantji|restaurantguru|zomato|foursquare|waze|google|goo|g|bing|yahoo|duckduckgo|mojeek|apple|wikipedia|wikidata|wikimapia|groupon|birdeye|buzzfile|dnb|bizapedia|opencorporates|sunbiz|corporationwiki|indeed|glassdoor|ziprecruiter|beenverified|superpages|citysearch|merchantcircle|hotfrog|cylex|brownbook|n49|showmelocal|ezlocal|local|insiderpages|judysbook|zocdoc|healthgrades|vitals|webmd|ratemds|sharecare|npiprofile|npidb|avvo|justia|findlaw|lawyers|martindale|superlawyers|realtor|zillow|trulia|redfin|homes|booksy|vagaro|styleseat|fresha|schedulicity|mindbodyonline|mindbody|classpass|toasttab|clover|square|business\.site|carfax|cars|cargurus|edmunds|autotrader|dealerrater|repairpal|mechanicadvisor|expedia|booking|hotels|kayak|trivago|priceline|agoda|orbitz|travelocity|hotwire|reddit|quora|pinterest|youtube|bizjournals|patch|nexthome|loopnet|crexi|alignable|thebluebook|procore|expertise|threebestrated|bestprosintown|topratedlocal|cityseeker|happycow|eatstreet|beyondmenu|menufy|chownow|order\.online|ordering\.app|wheree|storeboard|tuugo|find-us-here|us-business|bizhwy|opendi|yasabe|fyple|cybo|infobel|spoke|zoominfo|rocketreach|signalhire|crunchbase|instagram|facebook|fb|twitter|x|tiktok|linkedin|linktr|threads|snapchat)\.[a-z.]+$/i;
+const SOCIAL = /(^|\.)(facebook|fb|instagram|twitter|x|tiktok|linkedin|linktr|threads)\.(com|ee|me|net)$/i;
+
+/** Pull result links out of a search engine results page or RSS feed. */
+export function parseSearchResults(body) {
+  const out = [];
+  const seen = new Set();
+  const push = (url, title = '') => {
+    try {
+      const u = new URL(url);
+      if (!/^https?:$/.test(u.protocol)) return;
+      const key = u.hostname.replace(/^www\./, '') + u.pathname.replace(/\/$/, '');
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ url: u.href, host: u.hostname.replace(/^www\./, '').toLowerCase(), title: stripTags(title).slice(0, 160) });
+    } catch { /* not a URL */ }
+  };
+  const decode = s => s.replace(/&amp;/g, '&').replace(/&#x2F;/gi, '/').replace(/&#47;/g, '/');
+  // RSS (Bing format=rss)
+  for (const m of body.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>/gi)) push(decode(m[2].trim()), m[1]);
+  // Anchors: DuckDuckGo redirect (uddg=), Bing click-tracking (u=a1<base64>), or plain absolute hrefs
+  for (const m of body.matchAll(/<a\b[^>]*?href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    let href = decode(m[1]);
+    const uddg = href.match(/[?&]uddg=([^&]+)/);
+    if (uddg) href = decodeURIComponent(uddg[1]);
+    const bing = href.match(/bing\.com\/ck\/a\?.*?[?&]u=a1([^&]+)/);
+    if (bing) { try { href = atob(bing[1].replace(/-/g, '+').replace(/_/g, '/')); } catch { continue; } }
+    if (!/^https?:\/\//i.test(href)) continue;
+    push(href, m[2]);
+  }
+  return out.filter(r => !/(^|\.)(bing|duckduckgo|mojeek|microsoft|msn|live|w3\.org|schema\.org|gstatic|googleapis|cloudflare|jquery|bootstrapcdn|cdnjs)\.[a-z.]+$/i.test(r.host));
+}
+
+export function hostKind(host) {
+  if (SOCIAL.test(host)) return 'social';
+  if (DIRECTORY.test(host)) return 'directory';
+  return 'site';
+}
+
 /** Domain guesses for a business with no listed website. */
 export function candidateDomains(name, city = '') {
   const tokens = nameTokens(name);
@@ -272,7 +401,7 @@ export function hostOf(url) {
 /** OSM sometimes lists a Facebook page or a directory link as the "website". */
 export function classifyListedUrl(url) {
   const h = hostOf(url);
-  if (/(^|\.)(facebook|fb|instagram|twitter|x|tiktok|linktr|linkedin)\.(com|ee|me)$/.test(h)) return 'social';
-  if (/(^|\.)(yelp|tripadvisor|google|goo|business\.site|doordash|ubereats|grubhub|opentable|toasttab|square\.site|booksy|vagaro|styleseat|mindbodyonline)\./.test(h + '.')) return 'directory';
-  return 'site';
+  // A shop's own Square/Toast/Wix site (name.square.site) is still their website.
+  if (/\.(square\.site|wixsite\.com|weebly\.com|godaddysites\.com|squarespace\.com|webflow\.io|business\.site)$/.test(h)) return 'site';
+  return hostKind(h);
 }

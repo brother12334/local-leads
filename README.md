@@ -8,7 +8,10 @@ For every business in the search area, **Check all websites** runs the following
 
 | Situation | How it's detected | Shown as |
 |---|---|---|
-| No website listed | Guesses likely domains from the name and city (plus the domain of a business email address), checks DNS, loads each one that exists, and keeps it only if the page actually names the business | **No website** or a discovered site marked *(found)* |
+| No website listed | Finds the site through, in order: the chain's official site on Wikidata, the domain of a business email address, a **web search** (Bing, then DuckDuckGo, then Mojeek) by name + city, a search by phone number, and likely domain names. Each candidate is loaded and has to **prove it's the same business**: matching phone number, street address, or name plus city/domain. A different phone number on the page counts against it | A discovered site marked *(found)*, with the evidence shown |
+| Nothing found | Shows **No website** only if a web search actually ran. If every search engine was blocked, it says **No site found (unconfirmed)** instead | **No website** / **unconfirmed** |
+| Listed site is dead | Also searches for a newer site in case the map listing is just out of date | The current site, with a note about the stale listing |
+| Site blocks bots (Cloudflare etc.) | Security-challenge pages are recognized, so they aren't mistaken for empty or wrong sites | **Has website · not scanned** |
 | Only a Facebook / Instagram / Yelp page | The listed URL is on a social or directory host | **Social page only** |
 | Domain gone | DNS lookup returns NXDOMAIN | **Dead domain** |
 | Parked / for sale / expired | Page text matches parking-service and "buy this domain" patterns | **Parked domain** |
@@ -61,4 +64,4 @@ The code lives in `dist/js/`:
 - `store.js`: localStorage
 - `app.js`: the UI
 
-Automated checks are a strong starting point, not proof. Look at the site yourself before you reach out.
+Results from older versions of the checker are re-checked automatically. Automated checks are a strong starting point, not proof. Look at the site yourself before you reach out.

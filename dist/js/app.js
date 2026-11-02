@@ -1,5 +1,5 @@
 import { CATEGORIES, searchBusinesses } from './search.js';
-import { auditLead } from './audit.js';
+import { auditLead, AUDIT_VERSION } from './audit.js';
 import { pageSpeed, proxyMode } from './net.js';
 import { audits, crm, settings, ui } from './store.js';
 import { draftEmail } from './email.js';
@@ -21,12 +21,14 @@ export const STATUS = {
   outdated: { label: 'Outdated', tone: 'warn' },
   aging: { label: 'Aging', tone: 'mild' },
   modern: { label: 'Modern', tone: 'good' },
+  'likely-none': { label: 'No site found (unconfirmed)', tone: 'hot' },
+  protected: { label: 'Has website · not scanned', tone: 'good' },
   unknown: { label: 'Couldn’t check', tone: 'muted' },
 };
 const GROUPS = {
   all: ['All', () => true],
   hot: ['Best leads', l => opportunity(l) >= 70],
-  nosite: ['No website', l => ['none', 'social'].includes(statusOf(l))],
+  nosite: ['No website', l => ['none', 'social', 'likely-none'].includes(statusOf(l))],
   broken: ['Broken', l => STATUS[statusOf(l)].tone === 'bad'],
   outdated: ['Outdated', l => ['outdated', 'aging'].includes(statusOf(l))],
   modern: ['Modern', l => statusOf(l) === 'modern'],
@@ -46,17 +48,23 @@ function statusOf(l) {
   const o = crm.get(l.id)?.override;
   if (o === 'none') return 'none';
   if (o === 'good') return 'modern';
-  return audits.get(l.id)?.status || 'unchecked';
+  return audit(l)?.status || 'unchecked';
+}
+
+/** Saved result, ignoring ones made by an older, less accurate checker. */
+function audit(l) {
+  const a = audits.get(l.id);
+  return a && a.v >= AUDIT_VERSION ? a : null;
 }
 
 function opportunity(l) {
   const s = statusOf(l);
-  const a = audits.get(l.id);
+  const a = audit(l);
   const score = a?.analysis?.score ?? 0;
   let v = {
     none: 95, social: 90, dead: 90, parked: 90, placeholder: 88, broken: 86, unreachable: 80,
     outdated: Math.min(84, 62 + score * 0.3), aging: 42 + score * 0.4, modern: 8 + score * 0.5,
-    unknown: 50, checking: l.website ? 45 : 72, unchecked: l.website ? 45 : 72,
+    'likely-none': 74, protected: 20, unknown: 50, checking: l.website ? 45 : 72, unchecked: l.website ? 45 : 72,
   }[s];
   if (l.brand) v *= 0.35; // chains and franchises have corporate sites
   if (l.phone || l.email) v += 3;
@@ -108,7 +116,7 @@ function renderStats() {
     return h('button', { class: 'stat' + (group === k ? ' on' : ''), 'data-group': k, 'aria-pressed': String(group === k), onclick: () => { group = k; render(); } },
       h('span', { class: 'stat-n' }, n), h('span', { class: 'stat-l' }, label));
   }));
-  const checked = leads.filter(l => audits.get(l.id)).length;
+  const checked = leads.filter(l => audit(l)).length;
   $('#coverage').textContent = leads.length ? `${checked}/${leads.length} websites checked` : '';
 }
 
@@ -121,7 +129,7 @@ function visible() {
   const sort = $('#sort').value;
   const by = {
     opportunity: (a, b) => opportunity(b) - opportunity(a),
-    outdated: (a, b) => (audits.get(b.id)?.analysis?.score ?? -1) - (audits.get(a.id)?.analysis?.score ?? -1),
+    outdated: (a, b) => (audit(b)?.analysis?.score ?? -1) - (audit(a)?.analysis?.score ?? -1),
     name: (a, b) => a.name.localeCompare(b.name),
     distance: () => 0,
   }[sort];
@@ -142,7 +150,7 @@ function renderList() {
 
 function row(l) {
   const s = statusOf(l);
-  const a = audits.get(l.id);
+  const a = audit(l);
   const opp = opportunity(l);
   const stage = crm.get(l.id)?.stage;
   const host = a?.host || (l.website ? hostOf(l.website) : '');
@@ -172,14 +180,14 @@ function renderDetail(force = false) {
   const l = leads.find(x => x.id === selected);
   // Re-render only when this lead's data changed, so typing in the notes or the
   // email draft isn't wiped by a background scan.
-  const sig = l ? JSON.stringify([l.id, statusOf(l), audits.get(l.id)?.checkedAt, !!audits.get(l.id)?.psi, crm.get(l.id)?.stage, crm.get(l.id)?.override, settings.get().sender, settings.get().yourName]) : '';
+  const sig = l ? JSON.stringify([l.id, statusOf(l), audit(l)?.checkedAt, !!audit(l)?.psi, crm.get(l.id)?.stage, crm.get(l.id)?.override, settings.get().sender, settings.get().yourName]) : '';
   if (!force && sig === detailSig && box.childElementCount) return;
   detailSig = sig;
   if (!l) {
     box.replaceChildren(h('div', { class: 'detail-empty' }, 'Select a lead to see its website audit and a tailored email.'));
     return;
   }
-  const a = audits.get(l.id);
+  const a = audit(l);
   const s = statusOf(l);
   const c = crm.get(l.id) || {};
   const place = $('#place').value;
@@ -204,7 +212,7 @@ function renderDetail(force = false) {
       a?.analysis?.kind === 'live' ? meter(a.analysis.score) : null),
     h('p', { class: 'verdict-note' }, c.override ? (c.override === 'none' ? 'You confirmed this business has no website.' : 'You marked this business as having a good website.') : a?.note || (l.website ? `Listed website: ${hostOf(l.website)}. Not checked yet.` : 'No website on the map listing. Run a check to search for one.')),
     a && h('p', { class: 'meta' }, [
-      a.source === 'discovered' && `Found by domain search (${Math.round((a.confidence || 0) * 100)}% name match)`,
+      a.source === 'discovered' && a.how && `Found via ${a.how[0].toLowerCase() + a.how.slice(1)} · ${Math.round((a.confidence || 0) * 100)}% match${a.signals?.length ? ' (' + a.signals.join(', ') + ')' : ''}`,
       a.analysis?.title && `“${a.analysis.title}”`,
       a.archivedSince && `Online since ${a.archivedSince}`,
       `Checked ${timeAgo(a.checkedAt)}`,
@@ -335,7 +343,7 @@ async function runAudit(l) {
     if (prev?.psi && prev.host === result.host) result.psi = prev.psi;
     audits.set(l.id, result);
   } catch (e) {
-    audits.set(l.id, { status: 'unknown', note: 'Check failed: ' + e.message, checkedAt: new Date().toISOString() });
+    audits.set(l.id, { status: 'unknown', v: AUDIT_VERSION, note: 'Check failed: ' + e.message, checkedAt: new Date().toISOString() });
   } finally {
     checking.delete(l.id);
     render();
@@ -357,7 +365,7 @@ async function runPsi(l, url) {
 
 async function scanAll() {
   if (scan) { scan.cancel = true; return; }
-  const queue = visible().filter(l => !audits.get(l.id) || statusOf(l) === 'unknown');
+  const queue = visible().filter(l => !audit(l) || ['unknown', 'likely-none'].includes(statusOf(l)));
   if (!queue.length) { toast('Every visible lead has already been checked. Use the row buttons to re-check.'); return; }
   scan = { cancel: false, done: 0, total: queue.length };
   updateScanUi();
@@ -395,7 +403,7 @@ function exportCsv() {
   const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const lines = [cols.join(',')];
   for (const l of visible()) {
-    const a = audits.get(l.id);
+    const a = audit(l);
     const c = crm.get(l.id) || {};
     lines.push([l.name, l.category, [l.address, l.city].filter(Boolean).join(', '), l.phone, l.email, a?.url || l.website, STATUS[statusOf(l)].label,
       a?.analysis?.score ?? '', opportunity(l), (a?.analysis?.checks || []).filter(x => x.pass === false).map(x => x.label).join('; '),

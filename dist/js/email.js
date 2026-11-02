@@ -10,7 +10,7 @@ export function draftEmail(lead, audit, status, { sender, yourName, place }) {
   const personal = '[Add one real, specific detail you noticed about them.]';
   let subject, body;
 
-  if (status === 'none' || status === 'social') {
+  if (status === 'none' || status === 'social' || status === 'likely-none') {
     subject = `A website for ${lead.name}`;
     body = `I came across ${lead.name} while looking at local businesses in ${where}. ${personal}
 
