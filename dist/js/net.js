@@ -9,9 +9,13 @@ let localApi; // undefined = not probed yet
 
 async function timed(url, opts = {}, ms = TIMEOUT) {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
+  // Abort with a readable reason; a bare abort() surfaces as "signal is aborted without reason".
+  const t = setTimeout(() => ctrl.abort(new Error(`timed out after ${Math.round(ms / 1000)}s`)), ms);
+  const stop = () => ctrl.abort(new Error('cancelled'));
+  opts.signal?.addEventListener('abort', stop);
   try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
-  finally { clearTimeout(t); }
+  catch (e) { throw ctrl.signal.aborted && ctrl.signal.reason instanceof Error ? ctrl.signal.reason : e; }
+  finally { clearTimeout(t); opts.signal?.removeEventListener('abort', stop); }
 }
 
 async function ownProxy() {
@@ -226,20 +230,44 @@ export async function brandWebsite(qid) {
 const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
 
 export async function geocode(place) {
-  const r = await timed('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(place));
-  const j = await r.json();
-  if (!j.length) throw Error('Location not found');
-  return { lat: Number(j[0].lat), lon: Number(j[0].lon), label: j[0].display_name };
+  const key = 'll.geo.' + place.trim().toLowerCase();
+  try { const hit = JSON.parse(sessionStorage.getItem(key)); if (hit) return hit; } catch { /* no cache */ }
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await timed('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(place), {}, 20000);
+      if (!r.ok) throw Error(`location service returned ${r.status}`);
+      const j = await r.json();
+      if (!j.length) throw Error(`Couldn’t find “${place}”. Try adding the state, e.g. “Boca Raton, FL”.`);
+      const geo = { lat: Number(j[0].lat), lon: Number(j[0].lon), label: j[0].display_name };
+      try { sessionStorage.setItem(key, JSON.stringify(geo)); } catch { /* quota */ }
+      return geo;
+    } catch (e) {
+      if (/Couldn’t find/.test(e.message)) throw e;
+      lastErr = e;
+    }
+  }
+  throw Error(`The location service didn’t respond (${lastErr.message}). Try again in a moment.`);
 }
 
+async function overpassOne(host, query, signal) {
+  const r = await timed(host, { method: 'POST', body: 'data=' + encodeURIComponent(query), headers: { 'content-type': 'application/x-www-form-urlencoded' }, signal }, 60000);
+  if (r.status === 429 || r.status === 504) throw Error('busy');
+  if (!r.ok) throw Error(`returned ${r.status}`);
+  const j = await r.json();
+  if (j.remark && /runtime error|timed out/i.test(j.remark) && !j.elements?.length) throw Error('busy');
+  return j;
+}
+
+/** Ask every map server at once and use whichever answers first. */
 export async function overpass(query) {
-  let error;
-  for (const host of OVERPASS) {
-    try {
-      const r = await timed(host, { method: 'POST', body: 'data=' + encodeURIComponent(query), headers: { 'content-type': 'application/x-www-form-urlencoded' } }, 45000);
-      if (!r.ok) throw Error(`Map service returned ${r.status}`);
-      return await r.json();
-    } catch (e) { error = e; }
+  const ctrl = new AbortController();
+  try {
+    const j = await Promise.any(OVERPASS.map(h => overpassOne(h, query, ctrl.signal)));
+    ctrl.abort();
+    return j;
+  } catch (e) {
+    const why = [...new Set((e.errors || [e]).map(x => x.message))].join(', ');
+    throw Error(`The map service is busy right now (${why}). Try again in a minute, or use a smaller radius or a specific category.`);
   }
-  throw error;
 }

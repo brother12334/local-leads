@@ -469,7 +469,7 @@ async function search(e) {
     toast(`${leads.length} businesses found. ${leads.filter(l => !l.website).length} have no website listed.`);
   } catch (err) {
     leads = [];
-    toast('Search unavailable: ' + err.message);
+    toast(err.message, 9000);
   } finally {
     btn.disabled = false;
     btn.textContent = 'Find leads';
@@ -478,12 +478,12 @@ async function search(e) {
 }
 
 let toastTimer;
-function toast(msg) {
+function toast(msg, ms = 4200) {
   const t = $('#toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 4200);
+  toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
 
 // ---------- settings & theme ----------

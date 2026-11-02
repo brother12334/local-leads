@@ -60,7 +60,7 @@ export async function searchBusinesses(place, kind, radius) {
   const clauses = filters
     ? filters.map(f => { const [k, v] = f.split('='); return `nwr["name"]["${k}"="${v}"]${area};`; })
     : ALL_KEYS.map(k => `nwr["name"]["${k}"]${area};`);
-  const data = await overpass(`[out:json][timeout:40];(${clauses.join('')});out center tags 400;`);
+  const data = await overpass(`[out:json][timeout:55];(${clauses.join('')});out center tags 400;`);
   const seen = new Set();
   const leads = [];
   for (const e of data.elements || []) {
