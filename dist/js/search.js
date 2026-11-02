@@ -35,6 +35,7 @@ function normalize(e) {
     id: `${e.type}/${e.id}`,
     name: t.name,
     category: label(t),
+    cuisine: t.cuisine || '',
     address: [t['addr:housenumber'], t['addr:street']].filter(Boolean).join(' '),
     city: t['addr:city'] || '',
     phone: t.phone || t['contact:phone'] || '',

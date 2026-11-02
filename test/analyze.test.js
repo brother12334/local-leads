@@ -58,9 +58,15 @@ test('candidate domains', () => {
   const c = candidateDomains("Joe's Plumbing & Heating LLC", 'Boca Raton, Florida');
   assert.equal(c[0], 'joesplumbingheating.com');
   assert.ok(c.includes('joesplumbingandheating.com'));
-  assert.ok(c.includes('joesplumbingheating.co'));
-  assert.ok(c.length <= 7);
+  assert.ok(c.includes('joes-plumbing-heating.com'));
   assert.deepEqual(candidateDomains('A', ''), []);
+});
+
+test('candidate domains include shortened, hyphenated and cuisine forms', () => {
+  const c = candidateDomains("Tomasso's Pizza and Subs", 'Boca Raton, Florida', { words: ['pizza', 'restaurant'] });
+  for (const h of ['tomassos-pizza.com', 'tomassospizza.com', 'tomassos.com', 'tomassospizzaandsubs.com']) assert.ok(c.includes(h), h);
+  const short = candidateDomains("Tomasso's", 'Boca Raton', { words: ['pizza'] });
+  assert.ok(short.includes('tomassos-pizza.com'));
 });
 
 test('name matching', () => {

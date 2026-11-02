@@ -23,6 +23,7 @@ export const STATUS = {
   modern: { label: 'Modern', tone: 'good' },
   'likely-none': { label: 'No site found (unconfirmed)', tone: 'hot' },
   protected: { label: 'Has website · not scanned', tone: 'good' },
+  possible: { label: 'Likely has website', tone: 'good' },
   unknown: { label: 'Couldn’t check', tone: 'muted' },
 };
 const GROUPS = {
@@ -64,7 +65,7 @@ function opportunity(l) {
   let v = {
     none: 95, social: 90, dead: 90, parked: 90, placeholder: 88, broken: 86, unreachable: 80,
     outdated: Math.min(84, 62 + score * 0.3), aging: 42 + score * 0.4, modern: 8 + score * 0.5,
-    'likely-none': 74, protected: 20, unknown: 50, checking: l.website ? 45 : 72, unchecked: l.website ? 45 : 72,
+    'likely-none': 74, protected: 20, possible: 28, unknown: 50, checking: l.website ? 45 : 72, unchecked: l.website ? 45 : 72,
   }[s];
   if (l.brand) v *= 0.35; // chains and franchises have corporate sites
   if (l.phone || l.email) v += 3;

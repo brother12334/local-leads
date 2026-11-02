@@ -2,7 +2,7 @@ import { analyzeHtml, candidateDomains, classifyListedUrl, domainMatch, hostKind
 import { brandWebsite, fetchPage, firstArchived, resolveHost, webSearch } from './net.js';
 
 // Bump when detection logic changes so older (less accurate) results are re-checked.
-export const AUDIT_VERSION = 3;
+export const AUDIT_VERSION = 4;
 
 const FREE_MAIL = /^(gmail|googlemail|yahoo|hotmail|outlook|aol|icloud|me|live|msn|comcast|att|bellsouth|verizon|protonmail|proton|ymail|mail|gmx|zoho|cox|charter|earthlink|sbcglobal)\./i;
 const BROKEN = new Set(['dead', 'parked', 'placeholder', 'broken', 'unreachable']);
@@ -119,7 +119,8 @@ export async function findWebsite(lead, place, { excludeHost } = {}) {
     if ([...cands.values()].some(c => c.from === 'search' && c.dom >= 0.6 && c.titleMatch >= 0.6)) break;
   }
 
-  const guesses = candidateDomains(lead.name, place).filter(h => !cands.has(h));
+  const words = [...(lead.cuisine || '').split(/[;,]/), lead.category].filter(Boolean);
+  const guesses = candidateDomains(lead.name, place, { words }).filter(h => !cands.has(h));
   const dns = await Promise.all(guesses.map(async h => ({ host: h, ...(await resolves(h)) })));
   for (const d of dns) {
     if (d.exists === false) log.push({ host: d.host, result: 'not registered' });
@@ -127,7 +128,7 @@ export async function findWebsite(lead, place, { excludeHost } = {}) {
   }
 
   const rankScore = c => ({ email: 3, 'phone search': 2.5, search: 1.6 - (c.rank || 0) * 0.08, guess: 0.9 }[c.from] + c.dom * 1.5 + (c.titleMatch || 0));
-  const ordered = [...cands.values()].sort((a, b) => rankScore(b) - rankScore(a)).slice(0, 6);
+  const ordered = [...cands.values()].sort((a, b) => rankScore(b) - rankScore(a)).slice(0, 8);
 
   for (const c of ordered) {
     const res = await auditUrl(c.url, L);
@@ -146,7 +147,7 @@ export async function findWebsite(lead, place, { excludeHost } = {}) {
       return accept({ ...res, status: res.status === 'protected' ? 'protected' : res.status },
         0.7, `Web search (${engine}) — “${c.title || c.host}”`);
     }
-    if (couldntRead) { possible.push(c.host); log.push({ host: c.host, result: 'registered, couldn’t be read' }); continue; }
+    if (couldntRead) { possible.push(c); log.push({ host: c.host, result: 'registered, couldn’t be read' }); continue; }
     log.push({ host: c.host, result: res.status === 'parked' ? 'parked domain'
       : `doesn’t match this business (“${res.analysis.title || 'untitled'}”${id?.signals?.length ? ', ' + id.signals.join(', ') : ''})` });
   }
@@ -183,8 +184,13 @@ export async function auditLead(lead, place) {
       result = { status: 'social', url: f.social.url, host: f.social.host, source: 'discovered', tried: f.log,
         note: `Only a social page found (${f.social.host}) — no website of their own` };
     } else if (f.possible.length) {
-      result = { status: 'unknown', url: 'https://' + f.possible[0], host: f.possible[0], source: 'none', tried: f.log,
-        note: `Possible website ${f.possible.join(', ')} exists but couldn’t be read — open it to confirm` };
+      // A registered domain that matches the name is very likely theirs, even if it couldn't be read.
+      const best = f.possible.sort((a, b) => b.dom - a.dom)[0];
+      const strong = best.dom >= 0.6;
+      result = { status: strong ? 'possible' : 'unknown', url: 'https://' + best.host, host: best.host, source: 'discovered', tried: f.log,
+        note: strong
+          ? `${best.host} is registered and matches the name, but couldn’t be scanned — very likely their website. Open it to confirm.`
+          : `Possible website ${f.possible.map(p => p.host).join(', ')} exists but couldn’t be read — open it to confirm` };
     } else if (!f.searchOk) {
       result = { status: 'likely-none', source: 'none', tried: f.log,
         note: `No site at ${domains} likely domains, but web search was unavailable, so this isn’t confirmed. Re-check later or Google it.` };

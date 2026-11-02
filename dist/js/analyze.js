@@ -370,27 +370,38 @@ export function hostKind(host) {
   return 'site';
 }
 
-/** Domain guesses for a business with no listed website. */
-export function candidateDomains(name, city = '') {
+/**
+ * Domain guesses for a business with no listed website. Real domains are often a
+ * shortened name plus what they sell ("Tomasso's Pizza and Subs" → tomassos-pizza.com),
+ * so this mixes full and shortened names, hyphenated forms, category words and the city.
+ * Ordered most-likely first; DNS lookups are cheap, so it returns up to `limit` hosts.
+ */
+export function candidateDomains(name, city = '', { words = [], limit = 24 } = {}) {
   const tokens = nameTokens(name);
   if (!tokens.length) return [];
   const cityTokens = nameTokens(city.split(',')[0] || '');
-  const generic = new Set(['restaurant', 'cafe', 'salon', 'bar', 'grill', 'shop', 'store', 'services', 'service']);
-  const core = tokens.join('');
-  const noGeneric = tokens.filter(t => !generic.has(t)).join('');
-  const bases = [core];
-  if (noGeneric && noGeneric !== core) bases.push(noGeneric);
-  const withAnd = nameTokens(name, ['and']).join('');
-  if (withAnd !== core) bases.push(withAnd);
-  if (cityTokens.length) bases.push(core + cityTokens.join(''));
-  if (tokens.length > 1) bases.push(tokens.join('-'));
+  const generic = new Set(['restaurant', 'cafe', 'salon', 'bar', 'grill', 'shop', 'store', 'services', 'service', 'subs', 'pizzeria', 'kitchen', 'llc']);
+  const extra = [...new Set(words.flatMap(w => nameTokens(String(w).replace(/_/g, ' '))))].filter(w => w.length > 2 && !tokens.includes(w)).slice(0, 2);
+  const nameSets = [];
+  const addSet = t => { if (t.length && t.join('').length >= 4 && !nameSets.some(x => x.join() === t.join())) nameSets.push(t); };
+  addSet(tokens);                                            // tomassos pizza subs
+  addSet(tokens.slice(0, 2));                                // tomassos pizza
+  addSet(tokens.filter(t => !generic.has(t)));               // tomassos pizza
+  addSet(nameTokens(name, ['and']));                         // tomassos pizza and subs
+  addSet(tokens.slice(0, 1));                                // tomassos
+  for (const w of extra) addSet([tokens[0], w]);             // tomassos pizza (from cuisine/category)
   const out = [];
-  for (const b of bases) {
-    if (b.replace(/-/g, '').length < 4) continue;
-    for (const tld of ['.com', '.net']) out.push(b + tld);
+  for (const t of nameSets) {
+    out.push(t.join('') + '.com');
+    if (t.length > 1) out.push(t.join('-') + '.com');
   }
-  if (out.length) out.splice(2, 0, core + '.co');
-  return [...new Set(out)].slice(0, 7);
+  for (const t of nameSets.slice(0, 2)) {
+    if (cityTokens.length) out.push(t.join('') + cityTokens.join('') + '.com');
+    out.push(t.join('') + '.net');
+  }
+  if (cityTokens.length) out.push(tokens[0] + cityTokens.join('') + '.com', tokens.join('') + cityTokens.map(c => c[0]).join('') + '.com');
+  out.push(tokens.join('') + '.co');
+  return [...new Set(out)].filter(h => h.split('.')[0].replace(/-/g, '').length >= 4).slice(0, limit);
 }
 
 export function hostOf(url) {
