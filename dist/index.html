@@ -1,2 +1,109 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local Leads</title><style>body{font:16px system-ui;margin:0;background:#f5f3eb;color:#173b30}header{background:#173b30;color:white;padding:30px 5%}main{max-width:1100px;margin:auto;padding:30px 5%}input,select,button,textarea{font:inherit;padding:11px;border-radius:8px;border:1px solid #bbc5bd}button{background:#d9ed80;cursor:pointer}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.row input{flex:1;min-width:190px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin:20px 0}.card,.panel{background:white;padding:20px;border-radius:12px}.card button{margin:4px}.muted{color:#667}.tag{background:#edf1df;border-radius:20px;padding:5px 9px;display:inline-block}textarea{width:100%;height:220px;box-sizing:border-box}a{color:#17664b}</style><header><h1>Local Leads</h1><p>Review businesses in Boca Raton and across Florida.</p></header><main><div class="row"><input id="place" value="Boca Raton, Florida" aria-label="Location"><select id="kind" aria-label="Business type"><option value="all">All business types</option><option value="restaurant">Restaurants</option><option value="cafe">Cafes</option><option value="bakery">Bakeries</option><option value="hairdresser">Hair salons</option><option value="dentist">Dentists</option><option value="plumber">Plumbers</option></select><button id="search">Find businesses</button></div><p class="muted">Searches a 5 km area. Map listings may omit a business’s website. Check each lead before using it.</p><div class="row"><label for="filter">Show</label><select id="filter"><option value="unlisted">No website listed</option><option value="verified">Checked: no website found</option><option value="all">All listings</option><option value="website">Website listed or found</option></select><span id="status" aria-live="polite"></span></div><div id="cards" class="cards"></div><section class="panel"><h2>Email draft</h2><p class="muted">Only send after checking the business and adding a genuine observation.</p><input id="sender" placeholder="Your business name"><textarea id="email" placeholder="Select a business to draft an email."></textarea><button id="copy">Copy email</button></section></main><script src="app.js?v=4"></script></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Local Leads</title>
+  <meta name="description" content="Find local businesses, check whether their website exists, loads, and is outdated, and draft tailored outreach.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2311140f'/><circle cx='16' cy='14' r='6' fill='none' stroke='%23c8f169' stroke-width='3'/><path d='M16 20v6' stroke='%23c8f169' stroke-width='3' stroke-linecap='round'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="styles.css?v=5">
+  <script>try{var t=JSON.parse(localStorage.getItem('ll.settings')||'{}').theme;if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Local Leads home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="14" r="6" fill="none" stroke="currentColor" stroke-width="3"/><path d="M16 20v6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+      <span>Local Leads</span>
+    </a>
+    <form id="search-form" class="search" role="search">
+      <label class="field grow"><span>Location</span><input id="place" autocomplete="off" placeholder="City, neighborhood or ZIP" required></label>
+      <label class="field"><span>Category</span><select id="kind"></select></label>
+      <label class="field"><span>Radius</span>
+        <select id="radius">
+          <option value="1500">1.5 km</option>
+          <option value="3000">3 km</option>
+          <option value="5000">5 km</option>
+          <option value="10000">10 km</option>
+          <option value="20000">20 km</option>
+        </select>
+      </label>
+      <button id="go" class="btn primary" type="submit">Find leads</button>
+    </form>
+    <div class="top-actions">
+      <button id="theme" class="icon-btn" type="button" aria-label="Toggle light and dark theme" title="Theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg>
+      </button>
+      <button id="open-settings" class="icon-btn" type="button" aria-label="Settings" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      </button>
+    </div>
+  </header>
 
+  <nav id="stats" class="stats" aria-label="Lead groups"></nav>
+
+  <main class="workspace">
+    <section class="list-pane" aria-label="Leads">
+      <div class="toolbar">
+        <input id="q" type="search" placeholder="Filter by name…  ( / )" aria-label="Filter leads by name">
+        <select id="stage" aria-label="Pipeline stage">
+          <option value="">Any stage</option>
+          <option value="new">New</option>
+          <option value="contacted">Contacted</option>
+          <option value="interested">Interested</option>
+          <option value="won">Won</option>
+          <option value="skip">Not a fit</option>
+        </select>
+        <select id="sort" aria-label="Sort">
+          <option value="opportunity">Best opportunity</option>
+          <option value="outdated">Most outdated</option>
+          <option value="distance">Nearest</option>
+          <option value="name">Name</option>
+        </select>
+        <span class="spacer"></span>
+        <span id="count" class="muted small"></span>
+        <button id="export" class="btn ghost" type="button">Export CSV</button>
+        <button id="scan" class="btn primary" type="button"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8.6M20 4v4.6h-4.6M20 12a8 8 0 0 1-13.7 5.7L4 15.4M4 20v-4.6h4.6"/></svg></span>Check all websites</button>
+      </div>
+      <div id="progress" class="progress" hidden><span></span></div>
+      <div class="list-head" aria-hidden="true"><span>Score</span><span>Business</span><span>Website</span><span id="coverage"></span></div>
+      <ul id="leads" class="lead-list" aria-live="polite"></ul>
+    </section>
+
+    <aside class="side-pane">
+      <div id="map" class="map" role="region" aria-label="Map of leads"></div>
+      <div id="detail" class="detail"></div>
+    </aside>
+  </main>
+
+  <dialog id="settings" class="sheet">
+    <form method="dialog">
+      <h2>Settings</h2>
+      <div class="grid2">
+        <label class="field"><span>Your business name</span><input name="sender" placeholder="e.g. Brightline Web Studio"></label>
+        <label class="field"><span>Your name</span><input name="yourName" placeholder="Used to sign emails"></label>
+      </div>
+      <h3>Website checker</h3>
+      <p class="muted small">Browsers can’t read other websites directly, so pages are fetched through a proxy. Currently using: <b id="proxy-mode">…</b>. Public proxies work but are rate-limited; for reliable bulk checks run <code>npm start</code> locally or deploy <code>worker/cors-proxy.js</code> and paste its URL here.</p>
+      <label class="field"><span>Custom proxy URL (optional)</span><input name="proxy" placeholder="https://leads-proxy.you.workers.dev"></label>
+      <label class="field"><span>Google PageSpeed API key (optional, enables Lighthouse audits)</span><input name="psiKey" placeholder="AIza…" autocomplete="off"></label>
+      <div class="row between">
+        <button id="clear-audits" class="btn ghost danger" type="button" value="">Clear website checks</button>
+        <div class="row">
+          <button class="btn ghost" value="cancel" formnovalidate>Cancel</button>
+          <button class="btn primary" value="save">Save</button>
+        </div>
+      </div>
+      <p class="muted small kbd">Shortcuts: <kbd>/</kbd> filter · <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>c</kbd> check selected</p>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script type="module" src="js/app.js?v=5"></script>
+</body>
+</html>

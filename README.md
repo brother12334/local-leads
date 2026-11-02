@@ -1,3 +1,64 @@
 # Local Leads
 
-Searches OpenStreetMap business listings by location and category, highlights listings without a website field, and drafts customizable outreach emails. Website age and absence need manual verification. Serve `dist/` with a static web server.
+Find local businesses on OpenStreetMap, check each one's web presence automatically, and draft outreach based on what the check found.
+
+## What it checks
+
+For every business in the search area, **Check all websites** runs the following:
+
+| Situation | How it's detected | Shown as |
+|---|---|---|
+| No website listed | Guesses likely domains from the name and city (plus the domain of a business email address), checks DNS, loads each one that exists, and keeps it only if the page actually names the business | **No website** or a discovered site marked *(found)* |
+| Only a Facebook / Instagram / Yelp page | The listed URL is on a social or directory host | **Social page only** |
+| Domain gone | DNS lookup returns NXDOMAIN | **Dead domain** |
+| Parked / for sale / expired | Page text matches parking-service and "buy this domain" patterns | **Parked domain** |
+| "Coming soon", default server page, suspended | Placeholder patterns on a near-empty page | **Placeholder** |
+| Error or not loading | HTTP 4xx/5xx, or the domain exists but nothing loads | **Broken site** / **Site down** |
+| Live site | Scored 0–100 on how outdated it is (below) | **Modern** / **Aging** / **Outdated** |
+
+The outdated score is weighted from these checks: HTTPS, mobile viewport, HTML5 doctype, copyright year in the footer, table/`<font>` layout markup, Flash/Java plugins, jQuery version, CMS/generator version (old WordPress, FrontPage, Dreamweaver…), meta description, social preview tags, semantic structure, image optimization, and the `Last-Modified` header. The app also detects the platform (Wix, Squarespace, WordPress, GoDaddy…) and shows the earliest Wayback Machine snapshot as an "online since" date. With a free PageSpeed API key it can also run a full Google Lighthouse audit.
+
+Each lead gets an **opportunity score**: no site or a broken site ranks highest, outdated sites next, modern sites and chains/franchises lowest.
+
+## Features
+
+- Map of results colored by website status
+- Filters by group, pipeline stage and name, plus sorting
+- Pipeline stages (New → Contacted → Interested → Won / Not a fit), notes, and manual overrides
+- Email drafts that change with the finding: no site, social-only, broken domain, or the specific issues found on an outdated site
+- CSV export
+- Light and dark themes, a responsive layout, and keyboard shortcuts (`/` filter, `j`/`k` move, `c` check)
+
+Your data (checks, notes, stages, settings) stays in your browser's localStorage.
+
+## Running it
+
+**Static hosting (GitHub Pages):** works as-is. The root `index.html` redirects to `dist/`. Browsers can't read other websites directly, so pages are fetched through free public CORS proxies and DNS goes through Google/Cloudflare DNS-over-HTTPS. These public proxies are rate-limited, so checks can sometimes come back "Couldn't check". Re-run them, or use one of the options below.
+
+**Local server (most reliable):**
+
+```sh
+npm start        # http://localhost:8080
+```
+
+`server.js` has no dependencies. It serves the app and provides `/api/fetch` and `/api/dns`. The app finds these on its own. Requests to private and internal IP addresses are blocked.
+
+**Your own proxy for GitHub Pages:** deploy `worker/cors-proxy.js` as a Cloudflare Worker (free tier) and paste its URL into **Settings → Custom proxy URL**. Set `ALLOWED_ORIGIN` in the worker to your Pages origin.
+
+## Development
+
+```sh
+npm test         # analyzer + server tests (node --test)
+```
+
+The code lives in `dist/js/`:
+
+- `analyze.js`: HTML analysis and domain guessing (no DOM access, so it can be tested in Node)
+- `audit.js`: the check pipeline (DNS → fetch → analyze → discovery)
+- `net.js`: proxies, DNS, Wayback, PageSpeed, and OpenStreetMap
+- `search.js`: categories and Overpass queries
+- `email.js`: outreach templates
+- `store.js`: localStorage
+- `app.js`: the UI
+
+Automated checks are a strong starting point, not proof. Look at the site yourself before you reach out.

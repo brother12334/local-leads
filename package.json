@@ -1,0 +1,14 @@
+{
+  "name": "local-leads",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Find local businesses and check whether their website exists, works, and is outdated.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
