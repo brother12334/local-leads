@@ -128,6 +128,10 @@ textarea { width: 100%; resize: vertical; line-height: 1.5; }
 .toolbar input[type=search] { width: 220px; height: 36px; }
 .toolbar select { height: 36px; }
 .progress { height: 2px; background: var(--line); margin: 0 16px; border-radius: 2px; overflow: hidden; }
+.scan-info { margin: 8px 16px 0; font-size: 12.5px; color: var(--ink-2); }
+.chip.live { color: var(--ink-2); }
+.chip.live i { background: var(--hot); animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
 .progress > span { display: block; height: 100%; width: 0; background: var(--hot); transition: width .3s; }
 
 .list-head, .lead-main { display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(150px, 230px); gap: 14px; align-items: center; }

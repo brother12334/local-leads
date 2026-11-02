@@ -1,5 +1,5 @@
 import { analyzeHtml, candidateDomains, classifyListedUrl, domainMatch, hostKind, hostOf, nameMatch } from './analyze.js';
-import { brandWebsite, fetchPage, firstArchived, resolveHost, webSearch } from './net.js';
+import { brandWebsite, fetchPage, resolveHost, webSearch } from './net.js';
 
 // Bump when detection logic changes so older (less accurate) results are re-checked.
 export const AUDIT_VERSION = 4;
@@ -17,7 +17,12 @@ async function load(url) {
       const page = await fetchPage(u);
       if (!page.body && (!page.status || page.status >= 400)) throw Error('Empty response');
       return page;
-    } catch (e) { err = e; }
+    } catch (e) {
+      err = e;
+      // Public proxies fail the same way for http:// — only retry when our own
+      // checker saw a real HTTPS problem (bad certificate, refused connection…).
+      if (!e.code) break;
+    }
   }
   throw err;
 }
@@ -60,7 +65,7 @@ export async function auditUrl(url, lead) {
  * (by name + city, then by phone number), and likely domain names. Every candidate is
  * loaded and must prove it belongs to this business (phone, address, name + city/domain).
  */
-export async function findWebsite(lead, place, { excludeHost } = {}) {
+export async function findWebsite(lead, place, { excludeHost, stage = () => {}, deadline = Infinity } = {}) {
   const log = [];
   const city = (lead.city || place.split(',')[0] || '').trim();
   const L = { ...lead, place };
@@ -73,6 +78,7 @@ export async function findWebsite(lead, place, { excludeHost } = {}) {
 
   // 1. Chains: Wikidata holds the brand's official website.
   if (lead.brandWikidata) {
+    stage('brand lookup');
     const site = await brandWebsite(lead.brandWikidata);
     if (site) {
       const res = await auditUrl(site, L);
@@ -97,6 +103,8 @@ export async function findWebsite(lead, place, { excludeHost } = {}) {
   if (phone.length === 10) queries.push(`"${phone.slice(0, 3)}-${phone.slice(3, 6)}-${phone.slice(6)}"`);
 
   for (const [i, q] of queries.entries()) {
+    if (Date.now() > deadline) break;
+    stage(i === 0 ? 'searching the web' : 'searching by phone');
     let res;
     try { res = await webSearch(q); }
     catch (e) { log.push({ host: 'web search', result: e.message }); break; }
@@ -121,6 +129,7 @@ export async function findWebsite(lead, place, { excludeHost } = {}) {
 
   const words = [...(lead.cuisine || '').split(/[;,]/), lead.category].filter(Boolean);
   const guesses = candidateDomains(lead.name, place, { words }).filter(h => !cands.has(h));
+  stage('checking domains');
   const dns = await Promise.all(guesses.map(async h => ({ host: h, ...(await resolves(h)) })));
   for (const d of dns) {
     if (d.exists === false) log.push({ host: d.host, result: 'not registered' });
@@ -130,8 +139,12 @@ export async function findWebsite(lead, place, { excludeHost } = {}) {
   const rankScore = c => ({ email: 3, 'phone search': 2.5, search: 1.6 - (c.rank || 0) * 0.08, guess: 0.9 }[c.from] + c.dom * 1.5 + (c.titleMatch || 0));
   const ordered = [...cands.values()].sort((a, b) => rankScore(b) - rankScore(a)).slice(0, 8);
 
-  for (const c of ordered) {
-    const res = await auditUrl(c.url, L);
+  // Load candidates a few at a time in parallel, but judge them in rank order.
+  stage(`verifying ${ordered.length} possible site${ordered.length === 1 ? '' : 's'}`);
+  const pending = limitMap(ordered, 3, c => (Date.now() > deadline ? Promise.resolve(null) : auditUrl(c.url, L)));
+  for (const [idx, c] of ordered.entries()) {
+    const res = await pending[idx];
+    if (!res) { log.push({ host: c.host, result: 'skipped (time limit)' }); continue; }
     const id = res.analysis?.identity;
     let conf = id?.confidence ?? 0;
     if (c.from === 'email' && conf >= 0.3) conf = Math.max(conf, 0.85);
@@ -154,25 +167,40 @@ export async function findWebsite(lead, place, { excludeHost } = {}) {
   return { found: null, log, social, searchOk, engine, possible };
 }
 
+/** Run fn over items with at most n in flight; returns the promises in item order. */
+function limitMap(items, n, fn) {
+  let active = 0;
+  const queue = [];
+  const next = () => { while (active < n && queue.length) { active++; const job = queue.shift(); job().finally(() => { active--; next(); }); } };
+  return items.map(item => new Promise((resolve, reject) => {
+    queue.push(() => fn(item).then(resolve, reject));
+    next();
+  }));
+}
+
+const BUDGET_MS = 40000;
+
 /** Full audit for a lead. */
-export async function auditLead(lead, place) {
+export async function auditLead(lead, place, stage = () => {}) {
   const started = Date.now();
+  const deadline = started + BUDGET_MS;
   let result;
   const listed = lead.website;
   const listedKind = listed ? classifyListedUrl(listed) : null;
 
   if (listed && listedKind === 'site') {
+    stage('loading listed site');
     result = { ...(await auditUrl(listed, { ...lead, place })), source: 'listed' };
     // The listing may simply be stale — look for a current site before calling it broken.
     if (BROKEN.has(result.status)) {
-      const f = await findWebsite(lead, place, { excludeHost: result.host });
+      const f = await findWebsite(lead, place, { excludeHost: result.host, stage, deadline });
       if (f.found) {
         result = { ...f.found, source: 'discovered', tried: f.log,
           note: `Map listing points to ${result.host} (${LABEL[result.status]}), but their current site is ${f.found.host}. ${f.found.note}` };
       }
     }
   } else {
-    const f = await findWebsite(lead, place);
+    const f = await findWebsite(lead, place, { stage, deadline });
     const searched = f.searchOk ? `searched ${f.engine}` : 'web search was unavailable';
     const domains = f.log.filter(t => t.host !== 'web search').length;
     if (f.found) {
@@ -200,8 +228,5 @@ export async function auditLead(lead, place) {
     }
   }
 
-  if (result.host && ['modern', 'aging', 'outdated', 'broken', 'placeholder', 'protected'].includes(result.status)) {
-    result.archivedSince = await firstArchived(result.host);
-  }
   return { ...result, v: AUDIT_VERSION, checkedAt: new Date().toISOString(), ms: Date.now() - started };
 }

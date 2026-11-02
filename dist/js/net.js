@@ -4,7 +4,7 @@
 import { settings } from './store.js';
 import { parseSearchResults, isBotWall, stripTags } from './analyze.js';
 
-const TIMEOUT = 15000;
+const TIMEOUT = 9000;
 let localApi; // undefined = not probed yet
 
 async function timed(url, opts = {}, ms = TIMEOUT) {
@@ -71,16 +71,45 @@ export async function fetchPage(url) {
     if (!r.ok || j.error) throw Object.assign(Error(j.error || 'Proxy error ' + r.status), { code: j.code });
     return { ...j, via: own === '/api' ? 'local' : 'custom' };
   }
+  // Try the proxies that have been working first, and skip ones that keep failing,
+  // so one dead service doesn't add its timeout to every single request.
+  const now = Date.now();
+  const order = PUBLIC.filter(p => health(p.name).downUntil < now)
+    .sort((a, b) => health(b.name).score - health(a.name).score);
+  if (!order.length) throw Error('All public proxies are temporarily failing');
   let last;
-  for (const p of PUBLIC) {
+  for (const p of order) {
     try {
       const res = await p.get(url);
       // allorigins reports a failed upstream fetch as status 0 / null contents
       if (!res.status && !res.body) throw Error(p.name + ': upstream failed');
+      mark(p.name, true);
       return { ...res, via: p.name };
-    } catch (e) { last = e; }
+    } catch (e) { mark(p.name, false); last = e; }
   }
   throw last || Error('No proxy available');
+}
+
+const healthMap = new Map();
+function health(name) {
+  if (!healthMap.has(name)) healthMap.set(name, { score: 0, fails: 0, downUntil: 0 });
+  return healthMap.get(name);
+}
+function mark(name, ok, downMs = 120000) {
+  const h = health(name);
+  if (ok) { h.fails = 0; h.score = Math.min(h.score + 1, 20); return; }
+  h.fails++;
+  h.score = Math.max(h.score - 2, -20);
+  if (h.fails >= 3) { h.downUntil = Date.now() + downMs; h.fails = 0; }
+}
+
+/** Which services are currently usable — shown in the scan status line. */
+export function serviceStatus() {
+  const now = Date.now();
+  return {
+    proxies: PUBLIC.filter(p => health(p.name).downUntil < now).length,
+    engines: ENGINES.filter(e => health('search:' + e.name).downUntil < now).map(e => e.name),
+  };
 }
 
 /** Does a hostname resolve? → {exists: true|false|null} (null = couldn't tell). */
@@ -155,8 +184,11 @@ export async function webSearch(query, { skip = [] } = {}) {
   const key = query + '|' + skip.join(',');
   if (searchCache.has(key)) return searchCache.get(key);
   const errors = [];
-  for (const engine of ENGINES) {
-    if (skip.includes(engine.name)) continue;
+  const now = Date.now();
+  const engines = ENGINES.filter(e => !skip.includes(e.name) && health('search:' + e.name).downUntil < now);
+  // Every engine recently blocked us: fail instantly instead of waiting on each one again.
+  if (!engines.length) throw Error('Web search unavailable (search engines are blocking the free proxies right now)');
+  for (const engine of engines) {
     try {
       const page = await fetchPage(engine.url(query));
       const body = page.body || '';
@@ -167,8 +199,14 @@ export async function webSearch(query, { skip = [] } = {}) {
       }
       const out = { engine: engine.name, results };
       searchCache.set(key, out);
+      mark('search:' + engine.name, true);
       return out;
-    } catch (e) { errors.push(`${engine.name}: ${e.message}`); }
+    } catch (e) {
+      // A blocked engine stays blocked for a while; skip it for the next 10 minutes.
+      mark('search:' + engine.name, false, 600000);
+      if (e.message === 'blocked') health('search:' + engine.name).downUntil = Date.now() + 600000;
+      errors.push(`${engine.name}: ${e.message}`);
+    }
   }
   throw Error('Web search unavailable (' + errors.join('; ') + ')');
 }

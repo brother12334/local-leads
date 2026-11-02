@@ -1,6 +1,6 @@
 import { CATEGORIES, searchBusinesses } from './search.js';
 import { auditLead, AUDIT_VERSION } from './audit.js';
-import { pageSpeed, proxyMode } from './net.js';
+import { firstArchived, pageSpeed, proxyMode, serviceStatus } from './net.js';
 import { audits, crm, settings, ui } from './store.js';
 import { draftEmail } from './email.js';
 import { hostOf } from './analyze.js';
@@ -41,6 +41,8 @@ let leads = [];
 let selected = null;
 let group = 'all';
 const checking = new Set();
+const stages = new Map(); // leadId → what the check is doing right now
+const WORKERS = 5;
 let scan = null; // {cancel:boolean, done, total}
 let map, markers, markerById = new Map();
 
@@ -101,7 +103,7 @@ const ICONS = {
 };
 const icon = (name, cls = '') => h('span', { class: 'ic ' + cls, 'aria-hidden': 'true', html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>` });
 
-const chip = s => h('span', { class: `chip tone-${STATUS[s].tone}` }, h('i'), STATUS[s].label);
+const chip = (s, id) => h('span', { class: `chip tone-${STATUS[s].tone}` + (s === 'checking' ? ' live' : '') }, h('i'), s === 'checking' && stages.get(id) ? `Checking: ${stages.get(id)}…` : STATUS[s].label);
 
 // ---------- rendering ----------
 let frame = 0;
@@ -162,7 +164,7 @@ function row(l) {
         h('span', { class: 'lead-name' }, l.name, l.brand ? h('span', { class: 'tag' }, 'chain') : null, stage && stage !== 'new' ? h('span', { class: 'tag tag-stage' }, STAGES[stage]) : null),
         h('span', { class: 'lead-sub' }, [l.category, l.address].filter(Boolean).join(' · '))),
       h('span', { class: 'lead-site' },
-        chip(s),
+        chip(s, l.id),
         h('span', { class: 'host' }, host ? host + (a?.source === 'discovered' ? ' (found)' : '') : '—'))),
     h('button', { class: 'icon-btn', title: a ? 'Re-check website' : 'Check website', 'aria-label': `Check website for ${l.name}`, disabled: checking.has(l.id), onclick: () => runAudit(l) }, icon('scan', checking.has(l.id) ? 'spin' : '')));
 }
@@ -184,6 +186,7 @@ function renderDetail(force = false) {
   const sig = l ? JSON.stringify([l.id, statusOf(l), audit(l)?.checkedAt, !!audit(l)?.psi, crm.get(l.id)?.stage, crm.get(l.id)?.override, settings.get().sender, settings.get().yourName]) : '';
   if (!force && sig === detailSig && box.childElementCount) return;
   detailSig = sig;
+  if (l) lookupArchive(l);
   if (!l) {
     box.replaceChildren(h('div', { class: 'detail-empty' }, 'Select a lead to see its website audit and a tailored email.'));
     return;
@@ -267,6 +270,14 @@ function renderDetail(force = false) {
     ...[verdict, psi, checks, tried, pipeline, email].filter(Boolean));
 }
 
+const archiveAsked = new Set();
+function lookupArchive(l) {
+  const a = audit(l);
+  if (!a?.host || a.archivedSince !== undefined || archiveAsked.has(l.id) || !['modern', 'aging', 'outdated', 'protected', 'possible', 'broken', 'placeholder'].includes(a.status)) return;
+  archiveAsked.add(l.id);
+  firstArchived(a.host).then(since => { audits.set(l.id, { ...audit(l), archivedSince: since }); renderDetail(true); });
+}
+
 function meter(score) {
   return h('div', { class: 'meter', title: `Outdated score ${score}/100` },
     h('span', { class: 'meter-bar' }, h('span', { style: `width:${score}%` })),
@@ -340,13 +351,14 @@ async function runAudit(l) {
   render();
   try {
     const prev = audits.get(l.id);
-    const result = await auditLead(l, $('#place').value);
+    const result = await auditLead(l, $('#place').value, s => { stages.set(l.id, s); render(); });
     if (prev?.psi && prev.host === result.host) result.psi = prev.psi;
     audits.set(l.id, result);
   } catch (e) {
     audits.set(l.id, { status: 'unknown', v: AUDIT_VERSION, note: 'Check failed: ' + e.message, checkedAt: new Date().toISOString() });
   } finally {
     checking.delete(l.id);
+    stages.delete(l.id);
     render();
   }
 }
@@ -366,9 +378,11 @@ async function runPsi(l, url) {
 
 async function scanAll() {
   if (scan) { scan.cancel = true; return; }
-  const queue = visible().filter(l => !audit(l) || ['unknown', 'likely-none'].includes(statusOf(l)));
+  // Leads with a listed website need one page load, so do those first for quick answers.
+  const queue = visible().filter(l => !audit(l) || ['unknown', 'likely-none'].includes(statusOf(l)))
+    .sort((a, b) => Number(!a.website) - Number(!b.website));
   if (!queue.length) { toast('Every visible lead has already been checked. Use the row buttons to re-check.'); return; }
-  scan = { cancel: false, done: 0, total: queue.length };
+  scan = { cancel: false, done: 0, total: queue.length, started: Date.now() };
   updateScanUi();
   const worker = async () => {
     while (queue.length && !scan.cancel) {
@@ -377,7 +391,9 @@ async function scanAll() {
       updateScanUi();
     }
   };
-  await Promise.all(Array.from({ length: 3 }, worker));
+  const ticker = setInterval(updateScanUi, 1000);
+  await Promise.all(Array.from({ length: WORKERS }, worker));
+  clearInterval(ticker);
   const cancelled = scan.cancel;
   scan = null;
   updateScanUi();
@@ -391,11 +407,26 @@ function updateScanUi() {
     btn.lastChild.textContent = `Stop (${scan.done}/${scan.total})`;
     btn.classList.add('running');
     bar.hidden = false;
-    bar.firstElementChild.style.width = `${(scan.done / scan.total) * 100}%`;
+    bar.firstElementChild.style.width = `${Math.max(2, (scan.done / scan.total) * 100)}%`;
+    const info = $('#scan-info');
+    info.hidden = false;
+    const secs = (Date.now() - scan.started) / 1000;
+    const left = scan.done ? Math.round((secs / scan.done) * (scan.total - scan.done) / 60) : null;
+    const svc = serviceStatus();
+    proxyMode().then(mode => {
+      info.textContent = [
+        `${scan.done} of ${scan.total} checked · ${Math.min(WORKERS, scan.total - scan.done)} in progress`,
+        left != null ? `about ${left < 1 ? '<1' : left} min left` : 'estimating time…',
+        mode === 'Public proxies'
+          ? `using free public proxies${svc.engines.length ? '' : ' · web search blocked, results marked “unconfirmed”'} — run locally (npm start) for faster, more accurate checks`
+          : mode.toLowerCase(),
+      ].join(' · ');
+    });
   } else {
     btn.lastChild.textContent = 'Check all websites';
     btn.classList.remove('running');
     bar.hidden = true;
+    $('#scan-info').hidden = true;
   }
 }
 

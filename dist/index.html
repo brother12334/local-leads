@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="styles.css?v=7">
+  <link rel="stylesheet" href="styles.css?v=8">
   <script>try{var t=JSON.parse(localStorage.getItem('ll.settings')||'{}').theme;if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 </head>
 <body>
@@ -69,6 +69,7 @@
         <button id="scan" class="btn primary" type="button"><span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8.6M20 4v4.6h-4.6M20 12a8 8 0 0 1-13.7 5.7L4 15.4M4 20v-4.6h4.6"/></svg></span>Check all websites</button>
       </div>
       <div id="progress" class="progress" hidden><span></span></div>
+      <p id="scan-info" class="scan-info" hidden></p>
       <div class="list-head" aria-hidden="true"><span>Score</span><span>Business</span><span>Website</span><span id="coverage"></span></div>
       <ul id="leads" class="lead-list" aria-live="polite"></ul>
     </section>
@@ -104,6 +105,6 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script type="module" src="js/app.js?v=7"></script>
+  <script type="module" src="js/app.js?v=8"></script>
 </body>
 </html>
