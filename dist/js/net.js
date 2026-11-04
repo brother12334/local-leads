@@ -250,24 +250,50 @@ export async function geocode(place) {
   throw Error(`The location service didn’t respond (${lastErr.message}). Try again in a moment.`);
 }
 
-async function overpassOne(host, query, signal) {
-  const r = await timed(host, { method: 'POST', body: 'data=' + encodeURIComponent(query), headers: { 'content-type': 'application/x-www-form-urlencoded' }, signal }, 60000);
+async function overpassOne(host, query, ms) {
+  const r = await timed(host, { method: 'POST', body: 'data=' + encodeURIComponent(query), headers: { 'content-type': 'application/x-www-form-urlencoded' } }, ms);
   if (r.status === 429 || r.status === 504) throw Error('busy');
   if (!r.ok) throw Error(`returned ${r.status}`);
   const j = await r.json();
-  if (j.remark && /runtime error|timed out/i.test(j.remark) && !j.elements?.length) throw Error('busy');
+  if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) throw Error('busy');
   return j;
 }
 
-/** Ask every map server at once and use whichever answers first. */
-export async function overpass(query) {
-  const ctrl = new AbortController();
-  try {
-    const j = await Promise.any(OVERPASS.map(h => overpassOne(h, query, ctrl.signal)));
-    ctrl.abort();
-    return j;
-  } catch (e) {
-    const why = [...new Set((e.errors || [e]).map(x => x.message))].join(', ');
-    throw Error(`The map service is busy right now (${why}). Try again in a minute, or use a smaller radius or a specific category.`);
-  }
+/**
+ * Run several Overpass queries, at most 3 at a time, spreading them across the servers.
+ * If a server hasn't answered after 10s, the same query is also sent to the next server
+ * and whichever answers first wins, so one stalled server costs seconds, not a minute.
+ * onDone(index, data, error) fires as each query finishes.
+ */
+export async function overpassMany(queries, onDone) {
+  let next = 0;
+  const runOne = i => new Promise(resolve => {
+    const order = [0, 1, 2].map(k => OVERPASS[(i + k) % OVERPASS.length])
+      .sort((a, b) => Number(health('map:' + a).downUntil > Date.now()) - Number(health('map:' + b).downUntil > Date.now()));
+    let started = 0, failed = 0, settled = false, lastErr, timer;
+    const launch = () => {
+      if (settled || started >= order.length) return;
+      const host = order[started++];
+      clearTimeout(timer);
+      timer = setTimeout(launch, 10000); // hedge: try another server if this one is slow
+      overpassOne(host, queries[i], 35000).then(data => {
+        mark('map:' + host, true);
+        if (!settled) { settled = true; clearTimeout(timer); resolve([data, null]); }
+      }, err => {
+        mark('map:' + host, false, 60000);
+        lastErr = err;
+        if (++failed === order.length && !settled) { settled = true; clearTimeout(timer); resolve([null, lastErr]); }
+        else if (!settled) launch(); // failed fast: move on right away
+      });
+    };
+    launch();
+  });
+  const worker = async () => {
+    while (next < queries.length) {
+      const i = next++;
+      const [data, err] = await runOne(i);
+      onDone(i, data, err);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, queries.length) }, worker));
 }

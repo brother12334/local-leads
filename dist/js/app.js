@@ -453,22 +453,26 @@ async function search(e) {
   ui.patch({ place, kind: $('#kind').value, radius: $('#radius').value });
   const btn = $('#go');
   btn.disabled = true;
-  btn.textContent = 'Searching…';
+  btn.textContent = 'Finding location…';
   $('#leads').replaceChildren(...Array.from({ length: 6 }, () => h('li', { class: 'skeleton' })));
+  const byDistance = (geo, list) => list.sort((a, b) => ((a.lat - geo.lat) ** 2 + (a.lon - geo.lon) ** 2) - ((b.lat - geo.lat) ** 2 + (b.lon - geo.lon) ** 2));
+  let centered = false;
+  leads = [];
+  selected = null;
   try {
-    const { geo, leads: found } = await searchBusinesses(place, $('#kind').value, $('#radius').value);
-    leads = found;
+    const { geo, leads: found, failed } = await searchBusinesses(place, $('#kind').value, $('#radius').value, p => {
+      btn.textContent = `Searching map ${p.done}/${p.total}…`;
+      if (map && !centered) { map.setView([p.geo.lat, p.geo.lon], 13); centered = true; }
+      // Show results as each part of the search comes back.
+      if (p.leads.length) { leads = byDistance(p.geo, p.leads); render(); }
+    });
+    leads = byDistance(geo, found);
     selected = null;
-    if (map) {
-      map.setView([geo.lat, geo.lon], 13);
-      if (leads.length) map.fitBounds(leads.map(l => [l.lat, l.lon]), { padding: [24, 24], maxZoom: 15 });
-    }
-    // distance order is the natural "distance" sort
-    leads.sort((a, b) => ((a.lat - geo.lat) ** 2 + (a.lon - geo.lon) ** 2) - ((b.lat - geo.lat) ** 2 + (b.lon - geo.lon) ** 2));
+    if (map && leads.length) map.fitBounds(leads.map(l => [l.lat, l.lon]), { padding: [24, 24], maxZoom: 15 });
     try { sessionStorage.setItem('ll.lastResults', JSON.stringify({ place, leads })); } catch { /* quota */ }
-    toast(`${leads.length} businesses found. ${leads.filter(l => !l.website).length} have no website listed.`);
+    const summary = `${leads.length} businesses found. ${leads.filter(l => !l.website).length} have no website listed.`;
+    toast(failed.length ? `${summary} The map server timed out on ${failed.join(', ')}; search again to fill those in.` : summary, failed.length ? 9000 : 4200);
   } catch (err) {
-    leads = [];
     toast(err.message, 9000);
   } finally {
     btn.disabled = false;
