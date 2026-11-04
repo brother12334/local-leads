@@ -18,7 +18,8 @@ export function draftEmail(lead, audit, status, opts = {}) {
   const build = Number(opts.buildPrice) || EMAIL_DEFAULTS.buildPrice;
   const yearly = Number(opts.yearlyPrice) || EMAIL_DEFAULTS.yearlyPrice;
   const listed = lead.website && classifyListedUrl(lead.website) === 'site' ? hostOf(lead.website) : '';
-  const domain = NO_SITE.has(status) ? '' : (audit?.host || listed);
+  // Only a confirmed or listed site counts; an unconfirmed guess may belong to someone else.
+  const domain = NO_SITE.has(status) ? '' : (audit?.url ? audit.host : listed);
   const hasSite = !!domain;
   const things = FOOD.test(`${lead.category} ${lead.cuisine || ''}`)
     ? 'menus, offers and events'

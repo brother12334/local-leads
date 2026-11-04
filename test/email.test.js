@@ -38,3 +38,9 @@ test('barber is not treated as a bar', () => {
   assert.match(text, /services, hours and contact details/);
   assert.match(text, /keep ownership of clipjoint\.com/);
 });
+
+test('an unconfirmed guessed domain is never presented as theirs', () => {
+  const { text } = draftEmail({ name: 'Etoile', category: 'clothes' }, { status: 'unknown', host: 'etoile.com', unconfirmedUrl: 'https://etoile.com' }, 'unknown', {});
+  assert.doesNotMatch(text, /etoile\.com/);
+  assert.match(text, /to build it/);
+});

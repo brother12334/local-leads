@@ -23,7 +23,7 @@ export const STATUS = {
   modern: { label: 'Modern', tone: 'good' },
   'likely-none': { label: 'No site found (unconfirmed)', tone: 'hot' },
   protected: { label: 'Has website · not scanned', tone: 'good' },
-  possible: { label: 'Likely has website', tone: 'good' },
+  possible: { label: 'Possible website (unconfirmed)', tone: 'muted' },
   unknown: { label: 'Couldn’t check', tone: 'muted' },
 };
 const GROUPS = {
@@ -67,7 +67,7 @@ function opportunity(l) {
   let v = {
     none: 95, social: 90, dead: 90, parked: 90, placeholder: 88, broken: 86, unreachable: 80,
     outdated: Math.min(84, 62 + score * 0.3), aging: 42 + score * 0.4, modern: 8 + score * 0.5,
-    'likely-none': 74, protected: 20, possible: 28, unknown: 50, checking: l.website ? 45 : 72, unchecked: l.website ? 45 : 72,
+    'likely-none': 74, protected: 20, possible: 45, unknown: 50, checking: l.website ? 45 : 72, unchecked: l.website ? 45 : 72,
   }[s];
   if (l.brand) v *= 0.35; // chains and franchises have corporate sites
   if (l.phone || l.email) v += 3;
@@ -205,6 +205,7 @@ function renderDetail(force = false) {
 
   const links = h('div', { class: 'links' },
     siteHref && h('a', { href: siteHref, target: '_blank', rel: 'noopener' }, 'Open website', icon('ext')),
+    !siteHref && a?.unconfirmedUrl && h('a', { href: a.unconfirmedUrl, target: '_blank', rel: 'noopener' }, `Check ${a.host}?`, icon('ext')),
     h('a', { href: 'https://www.google.com/search?q=' + encodeURIComponent(`${l.name} ${l.city || place}`), target: '_blank', rel: 'noopener' }, 'Google', icon('ext')),
     h('a', { href: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([l.name, l.address, l.city || place].filter(Boolean).join(' '))}`, target: '_blank', rel: 'noopener' }, 'Maps', icon('ext')),
     l.facebook && h('a', { href: /^https?:/.test(l.facebook) ? l.facebook : 'https://facebook.com/' + l.facebook, target: '_blank', rel: 'noopener' }, 'Facebook', icon('ext')),
@@ -431,13 +432,13 @@ function updateScanUi() {
 }
 
 function exportCsv() {
-  const cols = ['Name', 'Category', 'Address', 'Phone', 'Email', 'Website', 'Website status', 'Outdated score', 'Opportunity', 'Top issues', 'Stage', 'Notes', 'OSM'];
+  const cols = ['Name', 'Category', 'Address', 'Phone', 'Email', 'Website', 'Unconfirmed website', 'Website status', 'Outdated score', 'Opportunity', 'Top issues', 'Stage', 'Notes', 'OSM'];
   const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const lines = [cols.join(',')];
   for (const l of visible()) {
     const a = audit(l);
     const c = crm.get(l.id) || {};
-    lines.push([l.name, l.category, [l.address, l.city].filter(Boolean).join(', '), l.phone, l.email, a?.url || l.website, STATUS[statusOf(l)].label,
+    lines.push([l.name, l.category, [l.address, l.city].filter(Boolean).join(', '), l.phone, l.email, a?.url || l.website, a?.unconfirmedUrl || '', STATUS[statusOf(l)].label,
       a?.analysis?.score ?? '', opportunity(l), (a?.analysis?.checks || []).filter(x => x.pass === false).map(x => x.label).join('; '),
       STAGES[c.stage || 'new'], c.notes, l.osm].map(esc).join(','));
   }

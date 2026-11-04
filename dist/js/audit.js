@@ -1,8 +1,8 @@
-import { analyzeHtml, candidateDomains, classifyListedUrl, domainMatch, hostKind, hostOf, nameMatch } from './analyze.js';
+import { analyzeHtml, candidateDomains, classifyListedUrl, domainMatch, hostKind, hostOf, nameMatch, nameTokens } from './analyze.js';
 import { brandWebsite, fetchPage, resolveHost, webSearch } from './net.js';
 
 // Bump when detection logic changes so older (less accurate) results are re-checked.
-export const AUDIT_VERSION = 4;
+export const AUDIT_VERSION = 5;
 
 const FREE_MAIL = /^(gmail|googlemail|yahoo|hotmail|outlook|aol|icloud|me|live|msn|comcast|att|bellsouth|verizon|protonmail|proton|ymail|mail|gmx|zoho|cox|charter|earthlink|sbcglobal)\./i;
 const BROKEN = new Set(['dead', 'parked', 'placeholder', 'broken', 'unreachable']);
@@ -212,13 +212,17 @@ export async function auditLead(lead, place, stage = () => {}) {
       result = { status: 'social', url: f.social.url, host: f.social.host, source: 'discovered', tried: f.log,
         note: `Only a social page found (${f.social.host}) — no website of their own` };
     } else if (f.possible.length) {
-      // A registered domain that matches the name is very likely theirs, even if it couldn't be read.
+      // An unreadable guessed domain is only a hint. Single-word or generic names
+      // (Etoile → etoile.com, Loft → loft.com) usually belong to someone else, so it
+      // takes at least two words of the name in the domain to call it possible.
       const best = f.possible.sort((a, b) => b.dom - a.dom)[0];
-      const strong = best.dom >= 0.6;
-      result = { status: strong ? 'possible' : 'unknown', url: 'https://' + best.host, host: best.host, source: 'discovered', tried: f.log,
+      const label = best.host.split('.')[0].replace(/-/g, '');
+      const words = nameTokens(lead.name).filter(t => t.length >= 3 && label.includes(t)).length;
+      const strong = best.dom >= 0.6 && words >= 2;
+      result = { status: strong ? 'possible' : 'unknown', unconfirmedUrl: 'https://' + best.host, host: best.host, source: 'none', tried: f.log,
         note: strong
-          ? `${best.host} is registered and matches the name, but couldn’t be scanned — very likely their website. Open it to confirm.`
-          : `Possible website ${f.possible.map(p => p.host).join(', ')} exists but couldn’t be read — open it to confirm` };
+          ? `${best.host} is registered and matches the name, but couldn’t be opened to confirm it’s theirs. Open it to check.`
+          : `No confirmed website. ${f.possible.map(p => p.host).join(', ')} exists but couldn’t be opened, and may belong to another business.` };
     } else if (!f.searchOk) {
       result = { status: 'likely-none', source: 'none', tried: f.log,
         note: `No site at ${domains} likely domains, but web search was unavailable, so this isn’t confirmed. Re-check later or Google it.` };
